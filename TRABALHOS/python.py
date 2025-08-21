@@ -1,0 +1,348 @@
+from __future__ import annotations
+from datetime import date, timedelta
+from abc import ABC, abstractmethod
+from typing import List, Iterable, Optional
+
+
+# =========================
+#    ITENS (ABSTRAÇÃO)
+# =========================
+class Item(ABC):
+    """Abstração base de um item do acervo (ABSTRAÇÃO).
+    Aplica ENCAPSULAMENTO via propriedades e métodos para manipular estoque.
+    Subclasses demonstram HERANÇA e POLIMORFISMO."""
+    def __init__(self, codigo: str, titulo: str, ano: int, estoque: int = 1):
+        self._codigo = codigo
+        self._titulo = titulo
+        self._ano = ano
+        self._estoque = int(estoque)
+
+    # ----- Encapsulamento de atributos -----
+    @property
+    def codigo(self) -> str:
+        return self._codigo
+
+    @property
+    def titulo(self) -> str:
+        return self._titulo
+
+    @property
+    def ano(self) -> int:
+        return self._ano
+
+    @property
+    def estoque(self) -> int:
+        return self._estoque
+
+    @estoque.setter
+    def estoque(self, value: int) -> None:
+        value = int(value)
+        if value < 0:
+            raise ValueError("Estoque não pode ficar negativo.")
+        self._estoque = value
+
+    @property
+    def tipo(self) -> str:
+        return self.__class__.__name__.lower()
+
+    def emprestar_um(self) -> None:
+        if self._estoque <= 0:
+            raise ValueError("Sem unidades disponíveis.")
+        self._estoque -= 1
+
+    def devolver_um(self) -> None:
+        self._estoque += 1
+
+    @abstractmethod
+    def dias_de_emprestimo(self) -> int:
+        """Cada tipo de item define sua regra (POLIMORFISMO)."""
+        raise NotImplementedError
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}('{self.titulo}', {self.ano})"
+
+
+# =========================
+#    SUBCLASSES (HERANÇA)
+# =========================
+class Livro(Item):
+    def dias_de_emprestimo(self) -> int:
+        return 14
+
+
+class Revista(Item):
+    def dias_de_emprestimo(self) -> int:
+        return 7
+
+
+class Referencia(Livro):
+    """Obras de referência (ex.: dicionários) não saem da biblioteca."""
+    def dias_de_emprestimo(self) -> int:
+        return 0  # bloqueia empréstimo
+
+
+# =========================
+#    USUÁRIO (ENCAPS.)
+# =========================
+class Usuario:
+    """Usuario com encapsulamento de sua lista de empréstimos."""
+    def __init__(self, id_usuario: str, nome: str, limite_emprestimos: int = 3):
+        self._id_usuario = id_usuario
+        self._nome = nome
+        self._limite_emprestimos = int(limite_emprestimos)
+        self._emprestimos: List[Emprestimo] = []
+
+    @property
+    def id_usuario(self) -> str:
+        return self._id_usuario
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    @property
+    def limite_emprestimos(self) -> int:
+        return self._limite_emprestimos
+
+    @property
+    def emprestimos(self) -> Iterable[Emprestimo]:
+        """Acesso somente-leitura (iterável imutável)."""
+        return tuple(self._emprestimos)
+
+    @property
+    def emprestimos_abertos(self) -> List[Emprestimo]:
+        return [e for e in self._emprestimos if e.em_aberto]
+
+    def pode_emprestar(self) -> bool:
+        return len(self.emprestimos_abertos) < self._limite_emprestimos
+
+    def registrar_emprestimo(self, e: Emprestimo) -> None:
+        self._emprestimos.append(e)
+
+    def encerrar_emprestimo(self, e: Emprestimo) -> None:
+        self._emprestimos = [x for x in self._emprestimos if x is not e]
+
+
+# =========================
+#  EMPRÉSTIMO (REGRAS)
+# =========================
+class Emprestimo:
+    def __init__(self, item: Item, usuario: Usuario, data: Optional[date] = None):
+        self.item = item
+        self.usuario = usuario
+        self.data_emprestimo = data or date.today()
+        self.data_devolucao: Optional[date] = None
+        dias = item.dias_de_emprestimo()
+        if dias <= 0:
+            raise PermissionError("Este item não pode ser emprestado.")
+        self.prazo = self.data_emprestimo + timedelta(days=dias)
+
+    @property
+    def em_aberto(self) -> bool:
+        return self.data_devolucao is None
+
+    def devolver(self) -> None:
+        if not self.em_aberto:
+            raise ValueError("Empréstimo já devolvido.")
+        self.data_devolucao = date.today()
+
+    def __str__(self) -> str:
+        status = "aberto" if self.em_aberto else f"devolvido em {self.data_devolucao}"
+        return f"[{status}] {self.item} -> {self.usuario.nome} (prazo {self.prazo})"
+
+
+# =========================
+#     BIBLIOTECA
+# =========================
+class Biblioteca:
+    def __init__(self, nome: str):
+        self.nome = nome
+        self._catalogo: dict[str, Item] = {}
+        self._usuarios: dict[str, Usuario] = {}
+        self._emprestimos: List[Emprestimo] = []
+
+    # Encapsulamento: acessos controlados ao catálogo/usuários
+    def adicionar_item(self, item: Item) -> None:
+        if item.codigo in self._catalogo:
+            raise ValueError("Código já cadastrado.")
+        self._catalogo[item.codigo] = item
+
+    def buscar_item(self, codigo: str) -> Item:
+        try:
+            return self._catalogo[codigo]
+        except KeyError:
+            raise KeyError("Item não encontrado.")
+
+    def cadastrar_usuario(self, usuario: Usuario) -> None:
+        if usuario.id_usuario in self._usuarios:
+            raise ValueError("Usuário já cadastrado.")
+        self._usuarios[usuario.id_usuario] = usuario
+
+    def buscar_usuario(self, id_usuario: str) -> Usuario:
+        try:
+            return self._usuarios[id_usuario]
+        except KeyError:
+            raise KeyError("Usuário não encontrado.")
+
+    def emprestar(self, id_usuario: str, codigo_item: str) -> Emprestimo:
+        usuario = self.buscar_usuario(id_usuario)
+        item = self.buscar_item(codigo_item)
+
+        if not usuario.pode_emprestar():
+            raise PermissionError("Usuário atingiu o limite de empréstimos.")
+        if item.dias_de_emprestimo() <= 0:
+            raise PermissionError("Este item não pode ser emprestado.")
+
+        item.emprestar_um()
+        emp = Emprestimo(item, usuario)
+        usuario.registrar_emprestimo(emp)
+        self._emprestimos.append(emp)
+        return emp
+
+    def devolver(self, id_usuario: str, codigo_item: str) -> None:
+        usuario = self.buscar_usuario(id_usuario)
+        item = self.buscar_item(codigo_item)
+        alvo: Optional[Emprestimo] = None
+        for e in self._emprestimos:
+            if e.usuario is usuario and e.item is item and e.em_aberto:
+                alvo = e
+                break
+        if not alvo:
+            raise LookupError("Empréstimo em aberto não encontrado.")
+        alvo.devolver()
+        item.devolver_um()
+        usuario.encerrar_emprestimo(alvo)
+
+    def listar_itens(self) -> List[str]:
+        return [f"{i.codigo}: {i} | estoque={i.estoque}" for i in self._catalogo.values()]
+
+    def listar_usuarios(self) -> List[str]:
+        return [f"{u.id_usuario}: {u.nome} ({len(u.emprestimos_abertos)} empréstimo(s) em aberto)"
+                for u in self._usuarios.values()]
+
+    def listar_emprestimos_abertos(self) -> List[Emprestimo]:
+        return [e for e in self._emprestimos if e.em_aberto]
+
+    def pesquisar_itens(self, termo: str) -> List[Item]:
+        t = (termo or "").strip().lower()
+        if not t:
+            return list(self._catalogo.values())
+        achados = []
+        for item in self._catalogo.values():
+            if (t in str(item.codigo).lower()
+                or t in str(item.titulo).lower()
+                or t in str(item.tipo).lower()):
+                achados.append(item)
+        return achados
+
+    def pesquisar_usuarios(self, termo: str) -> List[Usuario]:
+        t = (termo or "").strip().lower()
+        if not t:
+            return list(self._usuarios.values())
+        achados = []
+        for u in self._usuarios.values():
+            if (t in str(u.id_usuario).lower()
+                or t in str(u.nome).lower()):
+                achados.append(u)
+        return achados
+
+    def pesquisar_emprestimos(self, termo: str, status: Optional[str] = None) -> List[Emprestimo]:
+        t = (termo or "").strip().lower()
+
+        def casa(e: Emprestimo) -> bool:
+            alvo = (
+                t in str(e.item.codigo).lower()
+                or t in str(e.item.titulo).lower()
+                or t in str(e.usuario.id_usuario).lower()
+                or t in str(e.usuario.nome).lower()
+            ) if t else True
+            if not alvo:
+                return False
+            if status == "aberto":
+                return e.em_aberto
+            if status == "devolvido":
+                return not e.em_aberto
+            return True
+
+        return [e for e in self._emprestimos if casa(e)]
+
+
+# =========================
+#        DEMO CLI
+# =========================
+def demo():
+    print(">>> Biblioteca base")
+    bib = Biblioteca("Biblioteca Central")
+
+    # Herança + Polimorfismo: cada tipo define dias de empréstimo
+    bib.adicionar_item(Livro("I-001", "Clean Code", 2008, estoque=2))
+    bib.adicionar_item(Livro("I-002", "Python Fluente", 2015, estoque=1))
+    bib.adicionar_item(Revista("I-003", "Ciência Hoje #250", 2024, estoque=3))
+    bib.adicionar_item(Referencia("I-004", "Dicionário Houaiss", 2021, estoque=1))  # não emprestável
+
+    bib.cadastrar_usuario(Usuario("u1", "Ana", limite_emprestimos=2))
+    bib.cadastrar_usuario(Usuario("u2", "Bruno", limite_emprestimos=1))
+
+    # Fluxo inicial
+    bib.emprestar("u1", "I-001")
+    bib.emprestar("u1", "I-003")
+    bib.emprestar("u2", "I-002")
+    bib.devolver("u1", "I-003")
+
+    while True:
+        print("\n=== PESQUISAS ===")
+        print("[1] Pesquisar ITENS (por código, título ou tipo)")
+        print("[2] Pesquisar USUÁRIOS (por id ou nome)")
+        print("[3] Pesquisar EMPRÉSTIMOS (por item/usuário)")
+        print("[9] Listar EMPRÉSTIMOS Abertos")
+        print("[0] Sair")
+        op = input("Escolha: ").strip().lower()
+
+        if op == "0":
+            print("Até mais...")
+            break
+
+        if op == "1":
+            termo = input("Termo (se vazio lista todos): ").strip()
+            achados = bib.pesquisar_itens(termo)
+            if not achados:
+                print("  Nenhum item encontrado.")
+            else:
+                for it in achados:
+                    print(f"  {it.codigo}: {it} | estoque={it.estoque}")
+
+        elif op == "2":
+            termo = input("Termo (se vazio lista todos): ").strip()
+            achados = bib.pesquisar_usuarios(termo)
+            if not achados:
+                print("  Nenhum usuário encontrado.")
+            else:
+                for u in achados:
+                    print(f"  {u.id_usuario}: {u.nome} | empréstimos abertos={len(u.emprestimos_abertos)}")
+
+        elif op == "3":
+            termo = input("Termo (item/usuário; vazio lista todos): ").strip()
+            status = input("Status [enter=Todos | aberto | devolvido]: ").strip().lower() or None
+            if status not in (None, "aberto", "devolvido"):
+                print("  Status inválido. Usando 'Todos'.")
+                status = None
+            achados = bib.pesquisar_emprestimos(termo, status=status)
+            if not achados:
+                print("  Nenhum empréstimo encontrado.")
+            else:
+                for e in achados:
+                    print("  ", e)
+
+        elif op == "9":
+            abertos = bib.listar_emprestimos_abertos()
+            if not abertos:
+                print("  Nenhum empréstimo em aberto.")
+            else:
+                for e in abertos:
+                    print("  ", e)
+        else:
+            print("Opção inválida.")
+
+
+if __name__ == "__main__":
+    demo()
